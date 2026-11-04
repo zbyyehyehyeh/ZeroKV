@@ -1,6 +1,0 @@
-/home/zby/ZeroKV/build/CMakeFiles/zerokv_bench.dir
-/home/zby/ZeroKV/build/CMakeFiles/zerokv_component_tests.dir
-/home/zby/ZeroKV/build/CMakeFiles/zerokv_tests.dir
-/home/zby/ZeroKV/build/CMakeFiles/test.dir
-/home/zby/ZeroKV/build/CMakeFiles/edit_cache.dir
-/home/zby/ZeroKV/build/CMakeFiles/rebuild_cache.dir

@@ -8,3 +8,4 @@
 # 本地分析工具与中间产物（不进入仓库）
 /benchmark/
 /FlameGraph/
+build/
