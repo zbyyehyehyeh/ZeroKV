@@ -73,7 +73,10 @@ namespace kvstore
 
         auto finish_current = [&]()
         {
-            if (writer && writer->GetFileSize() > 0)
+            // ✅ 修复：不能用 GetFileSize()>0 判断——数据块未满 64KB 时尚未落盘，
+            // file_offset_ 仍为 0，会把"单块输出"整个丢掉（小数据集 Compaction 丢数据）。
+            // 改为按已写入条目数判断。
+            if (writer && writer->GetEntryCount() > 0)
             {
                 writer->Finish();
                 DBSSTMeta meta;
@@ -204,7 +207,7 @@ namespace kvstore
                                                         if (type == WALRecordType::PUT || type == WALRecordType::DELETE)
                                                         {
                                                             // ✅ 改动③配套：Put 返回被取代的旧版本，恢复期间忽略返回值
-                                                            //（discardable 是内存态统计，崩溃后从零重建，GC 扫描时由 checker 兜底）
+                                                            // （discardable 是内存态统计，崩溃后从零重建，GC 扫描时由 checker 兜底）
                                                             memtable_->Put(k, dh, seq);
                                                             memtable_bytes_.fetch_add(24, std::memory_order_relaxed);
                                                         }
@@ -523,14 +526,14 @@ namespace kvstore
 
     private:
         static constexpr size_t MEMTABLE_FLUSH_THRESHOLD = 16 * 1024 * 1024;
-        static constexpr size_t L0_COMPACTION_TRIGGER = 4;
+        static constexpr int L0_COMPACTION_TRIGGER = 4;
         static constexpr size_t TARGET_SST_SIZE = 16 * 1024 * 1024;
         static constexpr int BOTTOM_LEVEL = 1;
         static constexpr int MAX_GC_ROUNDS_PER_BATCH = 5;
         static constexpr double GC_DISCARDABLE_THRESHOLD = 0.3;
 
         std::string dir_;
-        uint64_t cache_ns_;   // ✅ BlockCache 命名空间（每实例唯一）
+        uint64_t cache_ns_; // ✅ BlockCache 命名空间（每实例唯一）
 
         std::atomic<bool> shutdown_{false};
         std::atomic<uint64_t> next_seq_{1};
@@ -749,7 +752,7 @@ namespace kvstore
             input.sources = std::move(readers);
             input.target_level = 1;
             input.is_bottom_level = true;
-            input.cache_ns = cache_ns_;   // ✅ BlockCache 命名空间
+            input.cache_ns = cache_ns_; // ✅ BlockCache 命名空间
 
             // ✅ 改动①：跨层覆盖的旧版本在此统一记 discardable（与写路径版本链记账互补且不重复）
             input.handle_obsolete = [this](uint64_t, uint64_t old_raw)
@@ -876,7 +879,7 @@ namespace kvstore
             input.sources = std::move(readers);
             input.target_level = target_level;
             input.is_bottom_level = (target_level == BOTTOM_LEVEL);
-            input.cache_ns = cache_ns_;   // ✅ BlockCache 命名空间
+            input.cache_ns = cache_ns_; // ✅ BlockCache 命名空间
 
             // ✅ 改动①：跨层覆盖的旧版本统一记账（写路径只覆盖同一 MemTable 内的覆盖）
             input.handle_obsolete = [this](uint64_t, uint64_t old_raw)

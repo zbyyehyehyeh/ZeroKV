@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/zerokv_component_tests.dir/component_tests.cpp.o -o zerokv_component_tests  /usr/lib/x86_64-linux-gnu/libz.so /usr/lib/x86_64-linux-gnu/liblz4.so 

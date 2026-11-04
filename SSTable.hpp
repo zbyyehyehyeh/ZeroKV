@@ -21,7 +21,7 @@
 
 #include "PinnableSlice.hpp"
 #include "DataHandle.h"
-#include "BloomFilter.hpp" // ✅ 已升级为 Prefix 版本
+#include "BloomFilter.hpp"     // ✅ 已升级为 Prefix 版本
 #include "KVStoreIterator.hpp" // ✅ 改动②：SST 迭代器实现统一迭代器接口
 
 template <typename KeyType>
@@ -50,8 +50,18 @@ public:
     {
         if (fd_ >= 0)
         {
-            try { Finish(); } catch (...) {}
-            if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+            try
+            {
+                Finish();
+            }
+            catch (...)
+            {
+            }
+            if (fd_ >= 0)
+            {
+                ::close(fd_);
+                fd_ = -1;
+            }
         }
     }
 
@@ -60,7 +70,8 @@ public:
 
     void Add(const KeyType &key, const DataHandle &value, uint64_t seq = 0)
     {
-        if (num_entries_ == 0) min_key_ = key;
+        if (num_entries_ == 0)
+            min_key_ = key;
         max_key_ = key;
         num_entries_++;
         // ✅ 收集完整 key，BloomFilter 内部会自动提取前缀并去重
@@ -87,10 +98,12 @@ public:
 
     void Finish()
     {
-        if (fd_ < 0) return;
+        if (fd_ < 0)
+            return;
         try
         {
-            if (current_block_entries_ > 0) FlushDataBlock();
+            if (current_block_entries_ > 0)
+                FlushDataBlock();
             WriteMetaBlock();
             WriteFilterBlock();
             WriteFooter();
@@ -99,15 +112,22 @@ public:
         }
         catch (...)
         {
-            ::close(fd_); fd_ = -1; throw;
+            ::close(fd_);
+            fd_ = -1;
+            throw;
         }
-        if (::close(fd_) < 0) { fd_ = -1; throw std::runtime_error("close failed"); }
+        if (::close(fd_) < 0)
+        {
+            fd_ = -1;
+            throw std::runtime_error("close failed");
+        }
         fd_ = -1;
     }
 
     KeyType GetMinKey() const { return min_key_; }
     KeyType GetMaxKey() const { return max_key_; }
     uint64_t GetFileSize() const { return file_offset_; }
+    uint64_t GetEntryCount() const { return num_entries_; }
 
 private:
     inline void AppendRaw(const void *data, size_t len)
@@ -124,19 +144,23 @@ private:
             ssize_t written = ::write(fd_, ptr, len);
             if (written < 0)
             {
-                if (errno == EINTR) continue;
+                if (errno == EINTR)
+                    continue;
                 throw std::runtime_error("write to SST failed");
             }
-            ptr += written; len -= written;
+            ptr += written;
+            len -= written;
         }
     }
 
     void FlushDataBlock()
     {
-        for (uint64_t s : block_seqs_) AppendRaw(&s, 8);
+        for (uint64_t s : block_seqs_)
+            AppendRaw(&s, 8);
         uint32_t num_seqs = static_cast<uint32_t>(block_seqs_.size());
         AppendRaw(&num_seqs, 4);
-        for (uint32_t rp : restart_points_) AppendRaw(&rp, 4);
+        for (uint32_t rp : restart_points_)
+            AppendRaw(&rp, 4);
         uint32_t num_restarts = static_cast<uint32_t>(restart_points_.size());
         AppendRaw(&num_restarts, 4);
 
@@ -145,14 +169,17 @@ private:
             reinterpret_cast<const char *>(block_buffer_.data()),
             compress_buffer_.data(), orig_size, static_cast<int>(compress_buffer_.size()));
 
-        uint32_t comp_size = (compressed_size > 0 && compressed_size < orig_size) 
-                             ? static_cast<uint32_t>(compressed_size) : orig_size;
+        uint32_t comp_size = (compressed_size > 0 && static_cast<uint32_t>(compressed_size) < orig_size)
+                                 ? static_cast<uint32_t>(compressed_size)
+                                 : orig_size;
         uint8_t type = (comp_size < orig_size) ? BLOCK_TYPE_LZ4 : BLOCK_TYPE_RAW;
 
         WriteToFile(&orig_size, 4);
         WriteToFile(&comp_size, 4);
-        if (type == BLOCK_TYPE_LZ4) WriteToFile(compress_buffer_.data(), comp_size);
-        else WriteToFile(block_buffer_.data(), orig_size);
+        if (type == BLOCK_TYPE_LZ4)
+            WriteToFile(compress_buffer_.data(), comp_size);
+        else
+            WriteToFile(block_buffer_.data(), orig_size);
 
         uint32_t crc = crc32(0L, Z_NULL, 0);
         crc = crc32(crc, reinterpret_cast<const Bytef *>(&type), 1);
@@ -281,7 +308,8 @@ public:
         CacheKey ck{cache_ns, file_id, block_offset};
         std::lock_guard<std::mutex> lock(shard.mu);
         auto it = shard.map.find(ck);
-        if (it == shard.map.end()) return nullptr;
+        if (it == shard.map.end())
+            return nullptr;
         shard.list.splice(shard.list.begin(), shard.list, it->second);
         return it->second->second;
     }
@@ -329,14 +357,27 @@ public:
         : filepath_(filepath), file_id_(file_id), cache_ns_(cache_ns)
     {
         int fd = ::open(filepath.c_str(), O_RDONLY);
-        if (fd < 0) throw std::runtime_error("SSTReader open failed: " + filepath);
+        if (fd < 0)
+            throw std::runtime_error("SSTReader open failed: " + filepath);
         struct stat st;
-        if (::fstat(fd, &st) < 0) { ::close(fd); throw std::runtime_error("fstat failed"); }
+        if (::fstat(fd, &st) < 0)
+        {
+            ::close(fd);
+            throw std::runtime_error("fstat failed");
+        }
         file_size_ = st.st_size;
-        if (file_size_ < 32) { ::close(fd); throw std::runtime_error("SST file too small"); }
+        if (file_size_ < 32)
+        {
+            ::close(fd);
+            throw std::runtime_error("SST file too small");
+        }
 
         void *base = ::mmap(nullptr, file_size_, PROT_READ, MAP_PRIVATE, fd, 0);
-        if (base == MAP_FAILED) { ::close(fd); throw std::runtime_error("mmap failed"); }
+        if (base == MAP_FAILED)
+        {
+            ::close(fd);
+            throw std::runtime_error("mmap failed");
+        }
         ::madvise(base, file_size_, MADV_RANDOM);
         ::close(fd);
 
@@ -362,13 +403,17 @@ public:
         size_t pos = meta_offset_ + 4;
         for (uint32_t i = 0; i < index_size; ++i)
         {
-            if (pos + 4 + 8 + sizeof(KeyType) > file_size_) break;
+            if (pos + 4 + 8 + sizeof(KeyType) > file_size_)
+                break;
             uint32_t k_len = 0;
-            std::memcpy(&k_len, data + pos, 4); pos += 4;
+            std::memcpy(&k_len, data + pos, 4);
+            pos += 4;
             uint64_t offset = 0;
-            std::memcpy(&offset, data + pos, 8); pos += 8;
+            std::memcpy(&offset, data + pos, 8);
+            pos += 8;
             KeyType key;
-            std::memcpy(&key, data + pos, sizeof(KeyType)); pos += sizeof(KeyType);
+            std::memcpy(&key, data + pos, sizeof(KeyType));
+            pos += sizeof(KeyType);
             index_[i] = {key, offset};
         }
     }
@@ -379,14 +424,17 @@ public:
     {
         // ✅ Prefix Bloom Filter 快速排除
         // 语义：返回 false 则一定不存在；返回 true 则可能存在（需后续精确验证）
-        if (filter_size_ > 0 && 
+        if (filter_size_ > 0 &&
             !BloomFilter::MayMatch(filter_data_, filter_size_, static_cast<uint64_t>(key)))
             return false;
 
-        if (index_.empty()) return false;
-        auto it = std::upper_bound(index_.begin(), index_.end(), key, 
-                                   [](const KeyType &k, const auto &e) { return k < e.first; });
-        if (it == index_.begin()) return false;
+        if (index_.empty())
+            return false;
+        auto it = std::upper_bound(index_.begin(), index_.end(), key,
+                                   [](const KeyType &k, const auto &e)
+                                   { return k < e.first; });
+        if (it == index_.begin())
+            return false;
         --it;
 
         uint64_t block_offset = it->second;
@@ -399,10 +447,12 @@ public:
 
         const uint8_t *blk = block_data->data();
         size_t orig_size = block_data->size();
-        if (orig_size < 4) return false;
+        if (orig_size < 4)
+            return false;
         uint32_t num_restarts = 0;
         std::memcpy(&num_restarts, blk + orig_size - 4, 4);
-        if (num_restarts * 4 + 4 > orig_size) return false;
+        if (num_restarts * 4 + 4 > orig_size)
+            return false;
         const uint8_t *restarts_ptr = blk + orig_size - 4 - num_restarts * 4;
         uint32_t num_seqs = 0;
         std::memcpy(&num_seqs, restarts_ptr - 4, 4);
@@ -420,9 +470,20 @@ public:
             std::memcpy(&k_len, blk + rp_offset, 4);
             KeyType rp_key;
             std::memcpy(&rp_key, blk + rp_offset + 4, sizeof(KeyType));
-            if (rp_key < key) { search_start = rp_offset; left = mid + 1; }
-            else if (rp_key > key) { right = mid - 1; }
-            else { search_start = rp_offset; break; }
+            if (rp_key < key)
+            {
+                search_start = rp_offset;
+                left = mid + 1;
+            }
+            else if (rp_key > key)
+            {
+                right = mid - 1;
+            }
+            else
+            {
+                search_start = rp_offset;
+                break;
+            }
         }
 
         uint32_t entry_idx = search_start / ENTRY_SIZE;
@@ -434,28 +495,37 @@ public:
         while (pos + ENTRY_SIZE <= data_end)
         {
             uint32_t k_len = 0, v_len = 0;
-            std::memcpy(&k_len, blk + pos, 4); pos += 4;
+            std::memcpy(&k_len, blk + pos, 4);
+            pos += 4;
             KeyType k;
-            std::memcpy(&k, blk + pos, sizeof(KeyType)); pos += sizeof(KeyType);
-            std::memcpy(&v_len, blk + pos, 4); pos += 4;
-            if (pos + v_len > data_end) break;
+            std::memcpy(&k, blk + pos, sizeof(KeyType));
+            pos += sizeof(KeyType);
+            std::memcpy(&v_len, blk + pos, 4);
+            pos += 4;
+            if (pos + v_len > data_end)
+                break;
             if (k == key)
             {
                 uint64_t s = 0;
-                if (entry_idx < num_seqs) std::memcpy(&s, seqs_ptr + entry_idx * 8, 8);
+                if (entry_idx < num_seqs)
+                    std::memcpy(&s, seqs_ptr + entry_idx * 8, 8);
                 if (!found || s > best_seq)
                 {
-                    best_seq = s; best_pos = pos; best_vlen = v_len; found = true;
+                    best_seq = s;
+                    best_pos = pos;
+                    best_vlen = v_len;
+                    found = true;
                 }
             }
-            else if (k > key) break;
+            else if (k > key)
+                break;
             pos += v_len;
             entry_idx++;
         }
 
         if (found)
         {
-            out_val.pin_external(reinterpret_cast<const char *>(blk + best_pos), best_vlen, 
+            out_val.pin_external(reinterpret_cast<const char *>(blk + best_pos), best_vlen,
                                  std::static_pointer_cast<void>(block_data));
             out_seq = best_seq;
             return true;
@@ -486,10 +556,11 @@ private:
         auto block_data = std::make_shared<std::vector<uint8_t>>(orig_size);
         if (type == BLOCK_TYPE_LZ4)
         {
-            int dec = LZ4_decompress_safe(reinterpret_cast<const char *>(base + 8), 
-                                          reinterpret_cast<char *>(block_data->data()), 
+            int dec = LZ4_decompress_safe(reinterpret_cast<const char *>(base + 8),
+                                          reinterpret_cast<char *>(block_data->data()),
                                           comp_size, orig_size);
-            if (dec < 0) throw std::runtime_error("LZ4 decompress failed");
+            if (dec < 0)
+                throw std::runtime_error("LZ4 decompress failed");
         }
         else
         {
@@ -500,7 +571,7 @@ private:
 
     std::string filepath_;
     uint64_t file_id_;
-    uint64_t cache_ns_ = 0;   // ✅ BlockCache 命名空间
+    uint64_t cache_ns_ = 0; // ✅ BlockCache 命名空间
     std::shared_ptr<void> mmap_holder_;
     size_t file_size_ = 0;
     uint64_t meta_offset_ = 0;
@@ -515,7 +586,11 @@ public:
     public:
         explicit Iterator(SSTReader *reader, uint64_t file_id) : reader_(reader), file_id_(file_id)
         {
-            if (reader_->index_.empty()) { valid_ = false; return; }
+            if (reader_->index_.empty())
+            {
+                valid_ = false;
+                return;
+            }
             LoadBlock(0);
             ParseNextEntry();
         }
@@ -535,11 +610,19 @@ public:
             return DataHandle(raw);
         }
 
-        void Next() override { if (valid_) ParseNextEntry(); }
+        void Next() override
+        {
+            if (valid_)
+                ParseNextEntry();
+        }
 
         void Seek(const KeyType &target) override
         {
-            if (reader_->index_.empty()) { valid_ = false; return; }
+            if (reader_->index_.empty())
+            {
+                valid_ = false;
+                return;
+            }
 
             // ✅ Seek 也可以利用 Prefix Bloom 跳过整个 SST
             // 如果目标 key 的前缀不在 filter 中，且当前 SST 的 min/max 范围也不包含该前缀
@@ -548,9 +631,15 @@ public:
             // （因为 Seek 通常需要定位到 >= target 的第一个 key，Bloom 无法直接回答这个问题）
 
             auto it = std::upper_bound(reader_->index_.begin(), reader_->index_.end(), target,
-                                       [](const KeyType &k, const auto &e) { return k < e.first; });
-            if (it == reader_->index_.begin()) block_idx_ = 0;
-            else { --it; block_idx_ = std::distance(reader_->index_.begin(), it); }
+                                       [](const KeyType &k, const auto &e)
+                                       { return k < e.first; });
+            if (it == reader_->index_.begin())
+                block_idx_ = 0;
+            else
+            {
+                --it;
+                block_idx_ = std::distance(reader_->index_.begin(), it);
+            }
 
             LoadBlock(block_idx_);
 
@@ -570,16 +659,28 @@ public:
                 std::memcpy(&k_len, blk + rp_offset, 4);
                 KeyType rp_key;
                 std::memcpy(&rp_key, blk + rp_offset + 4, sizeof(KeyType));
-                if (rp_key < target) { search_start = rp_offset; left = mid + 1; }
-                else if (rp_key > target) { right = mid - 1; }
-                else { search_start = rp_offset; break; }
+                if (rp_key < target)
+                {
+                    search_start = rp_offset;
+                    left = mid + 1;
+                }
+                else if (rp_key > target)
+                {
+                    right = mid - 1;
+                }
+                else
+                {
+                    search_start = rp_offset;
+                    break;
+                }
             }
 
             pos_ = search_start;
             entry_idx_ = search_start / SSTReader::ENTRY_SIZE;
 
             ParseNextEntry();
-            while (valid_ && current_key_ < target) ParseNextEntry();
+            while (valid_ && current_key_ < target)
+                ParseNextEntry();
         }
 
     private:
@@ -610,20 +711,31 @@ public:
             {
                 if (pos_ + SSTReader::ENTRY_SIZE > data_end_)
                 {
-                    if (++block_idx_ >= reader_->index_.size()) { valid_ = false; return; }
+                    if (++block_idx_ >= reader_->index_.size())
+                    {
+                        valid_ = false;
+                        return;
+                    }
                     LoadBlock(block_idx_);
                     continue;
                 }
                 const uint8_t *blk = current_block_->data();
                 uint32_t k_len = 0, v_len = 0;
-                std::memcpy(&k_len, blk + pos_, 4); pos_ += 4;
-                std::memcpy(&current_key_, blk + pos_, sizeof(KeyType)); pos_ += sizeof(KeyType);
-                std::memcpy(&v_len, blk + pos_, 4); pos_ += 4;
-                if (pos_ + v_len > data_end_) { valid_ = false; return; }
+                std::memcpy(&k_len, blk + pos_, 4);
+                pos_ += 4;
+                std::memcpy(&current_key_, blk + pos_, sizeof(KeyType));
+                pos_ += sizeof(KeyType);
+                std::memcpy(&v_len, blk + pos_, 4);
+                pos_ += 4;
+                if (pos_ + v_len > data_end_)
+                {
+                    valid_ = false;
+                    return;
+                }
 
                 last_pinned_block_ = current_block_;
                 current_slice_.Reset();
-                current_slice_.pin_external(reinterpret_cast<const char *>(blk + pos_), v_len, 
+                current_slice_.pin_external(reinterpret_cast<const char *>(blk + pos_), v_len,
                                             std::static_pointer_cast<void>(last_pinned_block_));
 
                 if (entry_idx_ < num_seqs_)

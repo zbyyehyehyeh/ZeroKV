@@ -1,0 +1,65 @@
+Start testing: Nov 04 14:49 UTC
+----------------------------------------------------------
+1/2 Testing: zerokv_tests
+1/2 Test: zerokv_tests
+Command: "/home/zby/ZeroKV/build/zerokv_tests"
+Directory: /home/zby/ZeroKV/build
+"zerokv_tests" start time: Nov 04 14:49 UTC
+Output:
+----------------------------------------------------------
+[TEST] test_data_handle
+[TEST] test_coding
+[TEST] test_bloom_filter
+  [INFO] Bloom FPR: 0.0084 (837/100000)
+[TEST] test_wal_roundtrip
+[TEST] test_wal_torn_tail
+[TEST] test_db_basic_and_reopen
+[TEST] test_range_scan_after_reopen
+[TEST] test_range_scan_memtable
+[TEST] test_db_gc
+  [INFO] GC rounds: 1
+[TEST] test_concurrent_puts
+[TEST] test_concurrent_same_key
+  [INFO] same-key GC rounds: 1
+[TEST] test_delete_survives_compaction
+
+========================================
+PASSED: 43912   FAILED: 0
+<end of output>
+Test time =   0.22 sec
+----------------------------------------------------------
+Test Passed.
+"zerokv_tests" end time: Nov 04 14:49 UTC
+"zerokv_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: zerokv_component_tests
+2/2 Test: zerokv_component_tests
+Command: "/home/zby/ZeroKV/build/zerokv_component_tests"
+Directory: /home/zby/ZeroKV/build
+"zerokv_component_tests" start time: Nov 04 14:49 UTC
+Output:
+----------------------------------------------------------
+==========================================================
+ ZeroKV Component Tests
+==========================================================
+  [1/9] DataHandle    ✅ PASS | 2,000,000 encode/decode: 0.00 ms (25000000000000 ops/s)
+  [2/9] Coding        ✅ PASS | 2,000,000 encode/decode: 0.00 ms (100000000000000 ops/s)
+  [3/9] BloomFilter   ✅ PASS | build 10000 keys: 0.15 ms | query 110000: 1.10 ms | FPR=0.837%
+  [4/9] WAL           ✅ PASS | append 100000: 53.86 ms | recover: 5.99 ms | torn-tail OK
+  [5/9] SkipList      ✅ PASS | put 200000: 13.56 ms | get 200000: 8.37 ms | 4T x 100000: 63.17 ms
+  [6/9] SSTable       ✅ PASS | write 100000: 5.94 ms (1180 KB) | point get: 5.51 ms | scan: 0.55 ms (50000 entries)
+  [7/9] ValueLog      ✅ PASS | append 100000: 153.45 ms | read back: 2.10 ms | 100000/100000 intact
+  [8/9] DB + VLog GC ✅ PASS | 20000 keys x 3 versions + 1000 deletes | rounds: 1 | reclaimed: 13168 KB | integrity: 19000/19000 | total: 203.58 ms
+  [9/9] DBIterator    ✅ PASS | memtable scan (unflushed): 4949/4949 | 0.04 ms | ✅ ordered
+----------------------------------------------------------
+ 🎉 All component tests passed.
+<end of output>
+Test time =   0.58 sec
+----------------------------------------------------------
+Test Passed.
+"zerokv_component_tests" end time: Nov 04 14:49 UTC
+"zerokv_component_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 04 14:49 UTC

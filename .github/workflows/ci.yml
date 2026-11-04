@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y liblz4-dev zlib1g-dev
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      - name: Unit + component tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Benchmark smoke test
+        run: ./build/zerokv_bench
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y liblz4-dev zlib1g-dev
+      - name: Configure (ASan + UBSan)
+        run: cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DZEROKV_SANITIZE=address,undefined
+      - name: Build
+        run: cmake --build build-asan -j"$(nproc)"
+      - name: Tests under ASan/UBSan
+        run: ./build-asan/zerokv_tests && ./build-asan/zerokv_component_tests
+
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y liblz4-dev zlib1g-dev
+      - name: Prepare TSan environment
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure (TSan)
+        run: cmake -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DZEROKV_SANITIZE=thread
+      - name: Build
+        run: cmake --build build-tsan -j"$(nproc)"
+      - name: Tests under TSan
+        run: ./build-tsan/zerokv_tests && ./build-tsan/zerokv_component_tests
