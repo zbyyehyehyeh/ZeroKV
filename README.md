@@ -3,7 +3,7 @@
 > 一个面向学习与实践的单机 KV 存储引擎：LSM-Tree 架构 + WiscKey 风格 KV 分离。
 > 技术栈：C++20 · Linux · LZ4 · Zlib · CMake
 
-![CI](https://github.com/<你的用户名>/ZeroKV/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/张博源/ZeroKV/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![C++](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
 
