@@ -1,0 +1,37 @@
+# 构建产物
+/build/
+/cmake-build-*/
+*.o
+*.a
+*.so
+compile_commands.json
+.cache/
+
+# 编译出来的二进制（不进仓库）
+/full_bench
+/component_tests
+/zerokv_bench
+/zerokv_tests
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 本地分析工具与中间产物（不进入仓库）
+/benchmark/
+/FlameGraph/
+
+# 运行时数据（绝不入库）
+/tmp/
+*.db
+wal.log
+MANIFEST
+MANIFEST.tmp
+sst_*.sst
+vlog_*.vlog
+
+# 系统
+perf.data
+core
+core.*
