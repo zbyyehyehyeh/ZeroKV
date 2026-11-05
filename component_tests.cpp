@@ -92,9 +92,9 @@ static bool test_data_handle() {
         char out[8] = {0};
         dh.copy_inline_to(out);
     }
-    double ms = t.elapsed_ms();
-    std::printf("  [1/9] DataHandle    %s | 2,000,000 encode/decode: %.2f ms (%.0f ops/s)\n",
-                ok ? "✅ PASS" : "❌ FAIL", ms, M / (ms / 1000.0));
+    double us = t.elapsed_ms() *1000.00 ;
+    std::printf("  [1/9] DataHandle    %s | 2,000,000 encode/decode: %.2f us \n",
+                ok ? "✅ PASS" : "❌ FAIL", us);
     return ok;
 }
 
@@ -116,9 +116,9 @@ static bool test_coding() {
         EncodeFixed64(buf, i);
         if (DecodeFixed64(buf) != i) { ok = false; break; }
     }
-    double ms = t.elapsed_ms();
-    std::printf("  [2/9] Coding        %s | 2,000,000 encode/decode: %.2f ms (%.0f ops/s)\n",
-                ok ? "✅ PASS" : "❌ FAIL", ms, M / (ms / 1000.0));
+    double us = t.elapsed_ms() * 1000.00;
+    std::printf("  [2/9] Coding        %s | 2,000,000 encode/decode: %.2f us\n",
+                ok ? "✅ PASS" : "❌ FAIL", us);
     return ok;
 }
 

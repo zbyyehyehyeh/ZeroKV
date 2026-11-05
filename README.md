@@ -129,9 +129,9 @@ cmake --build build-tsan -j$(nproc) && ./build-tsan/zerokv_tests
 | 5 | 范围扫描（SST，Seek+100×Next） | 10,000 | 451.20 ms | 999,967 条 | 冷缓存 |
 | 5b | 范围扫描（MemTable 未落盘） | 50,000 | 4.47 ms | — | 全量可见且有序 |
 | 6 | 4 线程并发写 | 500,000 | 3,967.52 ms | 126,023 ops/s | 校验 100% |
-| 7 | VLog GC | 100,000 × 1KB × 3 版本 | — | — | 回收 214,105 KB，完整性 100% |
+| 7 | VLog GC | 100,000 × 1KB × 3 版本 | 317871 KB | — | 回收 214,105 KB，完整性 100% |
 
-环境：`CPU: AMD Ryzen 9 9900X（分配 4 核）| 内存: 32GB DDR5 | 磁盘: NVMe SSD（PCIe 3.0）| 系统: ______`
+环境：`CPU: AMD Ryzen 9 9900X（分配 4 核）| 内存: 32GB DDR5 | 磁盘: NVMe SSD（PCIe 3.0）| 系统: Ubuntu 22.04 server`
 
 ### 结果要点
 
@@ -142,19 +142,19 @@ cmake --build build-tsan -j$(nproc) && ./build-tsan/zerokv_tests
 
 ## 组件级测试
 
-`component_tests.cpp` 逐组件验证正确性并给出微基准数字，运行后把结果填入下表：
+`component_tests.cpp` 逐组件验证正确性并给出微基准数字,结果如下表：
 
 | 组件 | 测试内容 | 结果 |
 |---|---|---|
-| DataHandle | 位域打包/解析正确性 + 200 万次编解码 | |
-| Coding | 定长编解码正确性 + 200 万次往返 | |
-| BloomFilter | 构建 1 万 key、查询 11 万次，误报率 | |
-| WAL | 追加 10 万条、完整恢复、尾部撕裂截断 | |
-| LockFreeSkipList | 单线程 20 万写读 + 4 线程并发写读 | |
-| SSTable | 写 10 万条、点查 10 万、范围扫描 | |
-| ValueLog | 追加 10 万条 + 逐条校验读回 | |
-| DB + VLog GC | 2 万 key × 3 版本覆盖 + 删除 + GC 完整性 | |
-| DBIterator | MemTable 未落盘扫描 + 墓碑跳过 + 有序性 | |
+| DataHandle | 位域打包/解析正确性 + 200 万次编解码 | 0.06 us |
+| Coding | 定长编解码正确性 + 200 万次往返 | 0.02 us |
+| BloomFilter | 构建 1 万 key、查询 11 万次，误报率 | 0.16 ms 1.10 ms FPR=0.837% |
+| WAL | 追加 10 万条、完整恢复、尾部撕裂截断 |51.83 ms 5.27 ms torn-tail OK |
+| LockFreeSkipList | 单线程 20 万写读 + 4 线程并发写读 | 13.81 ms 8.41 ms 78.21 ms |
+| SSTable | 写 10 万条、点查 10 万、范围扫描 | 5.92 ms (1180 KB) 6.07 ms 0.54 ms |
+| ValueLog | 追加 10 万条 + 逐条校验读回 | 150.00 ms 2.45 ms |
+| DB + VLog GC | 2 万 key × 3 版本覆盖 + 删除 + GC 完整性 | 19000/19000 198.87 ms |
+| DBIterator | MemTable 未落盘扫描 + 墓碑跳过 + 有序性 | 4949/4949 0.05 ms ✅ ordered |
 
 ## 设计文档
 
