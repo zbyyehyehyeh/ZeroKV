@@ -243,7 +243,6 @@ static void test_range_scan_after_reopen() {
         }
         db.Delete(100); // 验证迭代器跳过 tombstone
         db.Delete(500);
-        db.SyncWAL();
     }
     {
         DB db(dir);

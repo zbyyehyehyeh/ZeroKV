@@ -473,9 +473,7 @@ namespace kvstore
         {
             if (shutdown_.exchange(true))
                 return;
-            if (wal_)
-                wal_->Sync();
-
+            SyncWAL();
             FlushActiveMemTable();
             WaitForBackgroundJobs();
             SaveManifest();
