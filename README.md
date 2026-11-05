@@ -104,7 +104,7 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-### Sanitizer 构建（并发正确性必跑）
+### Sanitizer 构建（并发正确性）
 
 ```bash
 cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DZEROKV_SANITIZE=address,undefined
