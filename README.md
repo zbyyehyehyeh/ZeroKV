@@ -210,6 +210,7 @@ cmake --build build-tsan -j$(nproc) && ./build-tsan/zerokv_tests
 
 ```bash
 bash tests/scripts/run_robustness_crash.sh 10
+```
 
 ## 设计文档
 
