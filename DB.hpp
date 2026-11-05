@@ -488,8 +488,8 @@ namespace kvstore
         std::unique_ptr<DBIterator> NewIterator()
         {
             std::shared_lock<std::shared_mutex> mem_lk(memtable_mtx_);
-            std::shared_lock<std::shared_mutex> imm_lk(imm_mtx_);
             std::shared_lock<std::shared_mutex> sst_lk(sst_mtx_);
+            std::shared_lock<std::shared_mutex> imm_lk(imm_mtx_);
 
             auto active_mem = memtable_;
             auto imm_mems = imm_memtables_;
