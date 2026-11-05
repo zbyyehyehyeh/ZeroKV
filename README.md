@@ -224,6 +224,11 @@ bash tests/scripts/run_robustness_crash.sh 10
 4. 单日志串行写：多线程写入在 VLog/WAL 全局互斥，并发写吞吐受限（Roadmap：group commit / 多段 VLog）
 5. discardable 记账是启发式统计（写路径版本链 + Compaction 兜底），GC 选文件按估算比例，扫描时以 checker 逐条校验为准；崩溃后统计从零重建，不影响正确性
 6. 仅支持 Linux；MANIFEST 记录绝对路径（数据库目录不可整体移动）
+7. 崩溃注入目前仅覆盖单写线程场景；多线程写入过程中的崩溃尚未覆盖。断电（丢 page cache）安全性目前是设计论证 + fdatasync 语义推理，未做真实掉电实测
+
+## 未来展望
+1. 进行多线程并发优化以及多线程可靠性检测
+2. 引入 io_uring 批量 IO 与 O_DIRECT（读路径替代 mmap），降低 syscall 与缺页中断带来的延迟抖动；配合 group commit、多段 VLog、分段 GC 收窄并发与 GC 造成的 p99 长尾
 
 ## Roadmap
 
