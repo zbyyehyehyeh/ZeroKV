@@ -9,16 +9,16 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# ---------- 依赖 ----------
+# ---------- 寻找依赖 ----------
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
-
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LZ4 REQUIRED IMPORTED_TARGET liblz4)
 
-# ---------- 编译选项 ----------
+# ---------- 全局编译选项 ----------
 add_compile_options(-Wall -Wextra)
 
+# Sanitizer 支持
 set(ZEROKV_SANITIZE "" CACHE STRING "Comma-separated sanitizers: address,undefined,thread")
 if(ZEROKV_SANITIZE)
   message(STATUS "ZeroKV: enabling sanitizers: ${ZEROKV_SANITIZE}")
@@ -26,34 +26,81 @@ if(ZEROKV_SANITIZE)
   add_link_options(-fsanitize=${ZEROKV_SANITIZE})
 endif()
 
+# ---------- 核心库 (仅定义一次) ----------
+file(GLOB_RECURSE ZEROKV_SOURCES 
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
+)
 
-set(ZEROKV_BENCH_SOURCE "bench.cpp" CACHE STRING "Benchmark source file name")
+add_library(zerokv STATIC ${ZEROKV_SOURCES})
+set_target_properties(zerokv PROPERTIES LINKER_LANGUAGE CXX)
 
-add_executable(zerokv_bench ${ZEROKV_BENCH_SOURCE})
-target_include_directories(zerokv_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(zerokv_bench PRIVATE
-  Threads::Threads
-  ZLIB::ZLIB
-  PkgConfig::LZ4)
+# 【稳健的递归头文件路径收集】
+file(GLOB_RECURSE ALL_SUBDIRS LIST_DIRECTORIES true 
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
 
-# 组件级测试（component_tests.cpp 在仓库根目录）
-add_executable(zerokv_component_tests component_tests.cpp)
-target_include_directories(zerokv_component_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(zerokv_component_tests PRIVATE
-  Threads::Threads
-  ZLIB::ZLIB
-  PkgConfig::LZ4)
+set(ZEROKV_INCLUDE_DIRS "")
+foreach(entry ${ALL_SUBDIRS})
+  if(IS_DIRECTORY ${entry})
+    list(APPEND ZEROKV_INCLUDE_DIRS ${entry})
+  endif()
+endforeach()
 
-# ---------- 单元测试 ----------
-option(ZEROKV_BUILD_TESTS "Build unit tests" ON)
-if(ZEROKV_BUILD_TESTS)
-  enable_testing()
-  add_executable(zerokv_tests unit_tests.cpp)
-  target_include_directories(zerokv_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(zerokv_tests PRIVATE
+target_include_directories(zerokv
+  PUBLIC
+    ${ZEROKV_INCLUDE_DIRS}
+)
+
+target_link_libraries(zerokv
+  PRIVATE
     Threads::Threads
     ZLIB::ZLIB
-    PkgConfig::LZ4)
-  add_test(NAME zerokv_tests COMMAND zerokv_tests)
+    PkgConfig::LZ4
+)
+
+# ---------- 启用 CTest ----------
+include(CTest)
+enable_testing()
+
+# ---------- 可执行文件与测试 ----------
+
+# 1. Benchmark (不作为 CTest 测试，仅手动运行)
+add_executable(zerokv_bench tests/bench.cpp)
+target_link_libraries(zerokv_bench PRIVATE zerokv)
+
+# 2. 单元测试
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_tests.cpp")
+  add_executable(zerokv_tests tests/unit_tests.cpp)
+  target_link_libraries(zerokv_tests PRIVATE zerokv)
+  add_test(NAME zerokv_unit_tests COMMAND zerokv_tests)
+endif()
+
+# 3. 组件测试 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/component_tests.cpp")
+  add_executable(zerokv_component_tests tests/component_tests.cpp)
+  target_link_libraries(zerokv_component_tests PRIVATE zerokv)
   add_test(NAME zerokv_component_tests COMMAND zerokv_component_tests)
+endif()
+
+# 4. 可靠性测试 (C++ 部分) + 5. Bash 脚本部分（合并到同一条件块）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/robustness_tests.cpp")
+  add_executable(zerokv_robustness_tests tests/robustness_tests.cpp)
+  target_link_libraries(zerokv_robustness_tests PRIVATE zerokv)
+  
+  add_test(NAME zerokv_robustness_cpp COMMAND zerokv_robustness_tests)
+
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts/run_robustness_crash.sh")
+    add_test(NAME zerokv_crash_script 
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts/run_robustness_crash.sh 10)
+    
+    set_tests_properties(zerokv_crash_script PROPERTIES
+      ENVIRONMENT "ZEROKV_ROBUSTNESS_BIN=$<TARGET_FILE:zerokv_robustness_tests>"
+      TIMEOUT 600
+      LABELS "robustness;crash"
+    )
+  endif()
 endif()

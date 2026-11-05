@@ -16,7 +16,6 @@
 #include <unistd.h> // for geteuid
 
 #include "DB.hpp"
-#include "MemPool.hpp"     
 #include "EpochManager.hpp" 
 
 using namespace kvstore;

@@ -8,8 +8,6 @@
 #include <memory>
 
 #include "ValueLog.hpp"
-#include "DataHandle.h"
-#include "PinnableSlice.hpp"
 
 namespace kvstore
 {

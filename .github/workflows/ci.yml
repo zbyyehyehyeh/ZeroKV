@@ -51,3 +51,18 @@ jobs:
         run: cmake --build build-tsan -j"$(nproc)"
       - name: Tests under TSan
         run: ./build-tsan/zerokv_tests && ./build-tsan/zerokv_component_tests
+
+  robustness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y liblz4-dev zlib1g-dev
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      - name: C++ robustness tests
+        run: ctest --test-dir build -R zerokv_robustness_cpp --output-on-failure
+      - name: Crash recovery script tests
+        run: ctest --test-dir build -R zerokv_crash_script --output-on-failure --timeout 600

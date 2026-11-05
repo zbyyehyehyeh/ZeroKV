@@ -1,11 +1,7 @@
-# 编译出来的二进制（不进仓库）
-/full_bench
-/component_tests
-
 # IDE / 编辑器
 .vscode/
 
 # 本地分析工具与中间产物（不进入仓库）
-/benchmark/
-/FlameGraph/
+benchmark/
+FlameGraph/
 build/

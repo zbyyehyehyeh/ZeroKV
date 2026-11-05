@@ -8,7 +8,6 @@
 
 #include "SSTable.hpp"
 #include "MergeIterator.hpp"
-#include "DataHandle.h"
 
 namespace kvstore {
 

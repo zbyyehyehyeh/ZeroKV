@@ -31,8 +31,6 @@
 #include "ValueLogGC.hpp"
 #include "CompactionTask.hpp"
 #include "MemTableIterator.hpp"
-#include "MemPool.hpp"
-#include "DataHandle.h"
 #include "DBIterator.hpp"
 
 namespace kvstore

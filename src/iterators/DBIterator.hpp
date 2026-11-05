@@ -5,11 +5,9 @@
 #include <string>
 #include <vector>
 
-#include "DataHandle.h"
 #include "LockFreeSkipList.hpp"
 #include "MergeIterator.hpp"
 #include "MemTableIterator.hpp"
-#include "PinnableSlice.hpp"
 #include "SSTable.hpp"
 #include "ValueLog.hpp"
 
