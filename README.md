@@ -230,16 +230,6 @@ bash tests/scripts/run_robustness_crash.sh 10
 1. 进行多线程并发优化以及多线程可靠性检测
 2. 引入 io_uring 批量 IO 与 O_DIRECT（读路径替代 mmap），降低 syscall 与缺页中断带来的延迟抖动；配合 group commit、多段 VLog、分段 GC 收窄并发与 GC 造成的 p99 长尾
 
-## Roadmap
-
-- [ ] Snapshot / MVCC
-- [ ] 通用 Slice Key + 字符串 Key 支持
-- [ ] DeleteRange / 前缀扫描 API
-- [ ] Group Commit（并发写吞吐）
-- [ ] 与 RocksDB 的对照基准（同机器同负载）
-- [ ] 崩溃注入测试（随机 `kill -9` 循环验证）
-- [ ] 基于 ZeroKV 的 Raft 分布式层
-
 ## License
 
 MIT — 见 [LICENSE](LICENSE)
