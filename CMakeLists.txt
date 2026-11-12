@@ -72,6 +72,18 @@ enable_testing()
 add_executable(zerokv_bench tests/bench.cpp)
 target_link_libraries(zerokv_bench PRIVATE zerokv)
 
+# 1b. 长尾延迟基准 (不作为 CTest 测试，仅手动运行)
+add_executable(zerokv_latency tests/latency_tests.cpp)
+target_link_libraries(zerokv_latency PRIVATE zerokv)
+
+# 1c. 大小 value 详细对比 (不作为 CTest 测试，仅手动运行)
+add_executable(zerokv_value_compare tests/value_size_compare.cpp)
+target_link_libraries(zerokv_value_compare PRIVATE zerokv)
+
+# 1d. 干净的写/读采样负载 (供火焰图，不作为 CTest 测试)
+add_executable(zerokv_clean_perf tests/clean_perf.cpp)
+target_link_libraries(zerokv_clean_perf PRIVATE zerokv)
+
 # 2. 单元测试
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_tests.cpp")
   add_executable(zerokv_tests tests/unit_tests.cpp)

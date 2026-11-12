@@ -5,3 +5,5 @@
 benchmark/
 FlameGraph/
 build/
+build_prof/
+/perf

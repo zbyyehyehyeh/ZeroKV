@@ -30,7 +30,7 @@ ZeroKV 实现了现代存储引擎的核心机制：
 | Compaction | 统一迭代器接口多路归并（同 Key 取最新 Seq，底层丢墓碑 + 旧版本统一记账） |
 | 范围扫描 | DBIterator 合并 MemTable + Immutable + L0 + L1，未落盘数据可见 |
 | 并发控制 | shared_mutex 分级锁 + WriteController 背压 + 后台线程池 |
-| 测试 | 组件级测试 + 7 项全量基准 + CI（GCC/Clang、ASan/UBSan/TSan） |
+| 测试 | 组件级测试 + 7 项全量基准 + 长尾延迟 + 大小 value 对比 + 火焰图 + CI（GCC/Clang、ASan/UBSan/TSan） |
 
 ## 架构图
 
@@ -85,6 +85,9 @@ ZeroKV/
 │   ├── scripts/
 │   │   └── run_robustness_crash.sh # 极端崩溃恢复可靠性测试脚本（kill -9）
 │   ├── bench.cpp              # 7 项全量基准测试（Benchmark）
+│   ├── clean_perf.cpp         # 干净写/读采样负载（供火焰图，write/read 两种模式）
+│   ├── latency_tests.cpp      # 长尾延迟分布（p50/p90/p99/p99.9/p99.99）
+│   ├── value_size_compare.cpp # 大小 value 详细对比（inline vs VLog）
 │   ├── component_tests.cpp    # 9 大核心组件逐项压测与交互测试
 │   ├── robustness_tests.cpp   # 故障注入、IO 异常与并发崩溃恢复测试
 │   └── unit_tests.cpp         # 原子单元测试（覆盖编码、布隆过滤器等）
@@ -131,6 +134,13 @@ ctest --test-dir build --output-on-failure
 ./build/zerokv_component_tests          # 组件级测试
 ./build/zerokv_robustness_tests         # 可靠性专项
 ./build/zerokv_robustness_tests crash   # 只跑指定组（按名称前缀过滤）
+
+# 性能专项
+./build/zerokv_bench                    # 7 项全量基准
+./build/zerokv_value_compare            # 大小 value 对比
+./build/zerokv_latency                  # 长尾延迟分布（冷读建议 sudo）
+./build/zerokv_clean_perf write         # 纯写采样（供火焰图）
+./build/zerokv_clean_perf read          # 纯读采样（供火焰图）
 ```
 
 ### Sanitizer 构建（并发正确性）
@@ -147,27 +157,102 @@ cmake --build build-tsan -j$(nproc) && ./build-tsan/zerokv_tests
 
 7 项基准：顺序写 / 点查命中 / 点查未命中（热 vs 冷）/ 范围扫描（SST + MemTable）/ 4 线程并发写 / WAL 崩溃恢复 / VLog GC。
 
-> 运行条件：`sudo ./full_bench`，[3/7] 冷未命中前已 drop OS page cache，因此 [4/7] 及之后均为冷缓存环境。
+> 下表为 `sudo` 运行结果（冷未命中与冷扫描前已 drop page cache）。
 
 | # | 测试项 | 数据量 | 耗时 | QPS / ops | 备注 |
 |---|---|---|---|---|---|
-| 1 | 顺序写 | 500,000 | 1,500.97 ms | 333,117 ops/s | |
-| 2 | 点查（命中） | 200,000 | 72.70 ms | 2,751,057 QPS | |
-| 3 | 点查（未命中，热） | 200,000 | 8.10 ms | 24,705,123 QPS | 误报 0 |
-| 4 | 点查（未命中，冷） | 200,000 | 8.09 ms | 24,720,024 QPS | drop page cache 后 |
-| 5 | 范围扫描（SST，Seek+100×Next） | 10,000 | 451.20 ms | 999,967 条 | 冷缓存 |
-| 5b | 范围扫描（MemTable 未落盘） | 50,000 | 4.47 ms | — | 全量可见且有序 |
-| 6 | 4 线程并发写 | 500,000 | 3,967.52 ms | 126,023 ops/s | 校验 100% |
-| 7 | VLog GC | 100,000 × 1KB × 3 版本 | 317871 KB | — | 回收 214,105 KB，完整性 100% |
+| 1 | 顺序写 | 500,000 | 1,428.75 ms | 349,957 ops/s | |
+| 2 | 点查（命中） | 200,000 | 66.83 ms | 2,992,755 QPS | 零拷贝读 |
+| 3 | 点查（未命中，热） | 200,000 | 8.09 ms | 24,733,093 QPS | 误报 0 |
+| 4 | 点查（未命中，冷） | 200,000 | 7.96 ms | 25,119,954 QPS | drop page cache 后 |
+| 5 | 范围扫描（SST，Seek+100×Next） | 10,000 | 407.47 ms | 999,967 条 | 冷缓存 |
+| 5b | 范围扫描（MemTable 未落盘） | 50,000 | 6.48 ms | — | 全量可见且有序 |
+| 6 | 4 线程并发写 | 500,000 | 4,040.51 ms | 123,747 ops/s | 校验 100% |
+| 7 | VLog GC | 100,000 × 1KB × 3 版本 | — | — | 回收 214,106 KB，完整性 100% |
 
 环境：`CPU: AMD Ryzen 9 9900X（分配 4 核）| 内存: 32GB DDR5 | 磁盘: NVMe SSD（PCIe 3.0）| 系统: Ubuntu 22.04 server`
 
 ### 结果要点
 
-- **冷未命中 ≈ 热未命中**：未命中路径由前缀 Bloom 直接否定，且索引块常驻进程内 BlockCache，几乎不触发磁盘 IO；冷/热差距主要体现在命中大 Value 与范围扫描（同机未 drop cache 时 SST 扫描为 93.40 ms，drop 后 451.20 ms）。
+- **零拷贝读**：点查走 `GetZeroCopy`（VLog 走 mmap pin，不拷贝整段），相对拷贝版 `Get` 使 1KB 大值读吞吐提升约 33%。
+- **冷未命中 ≈ 热未命中**：未命中路径由前缀 Bloom 直接否定，索引块常驻进程内 BlockCache，几乎不触发磁盘 IO。
+- **冷范围扫描比热慢约 4 倍**：drop page cache 后 SST 扫描 407.47 ms（热缓存约 100 ms），长尾来自 mmap 缺页 + LZ4 解压。
 - **崩溃恢复**：重开实例后 10,000/10,000 全部恢复，WAL + CRC 尾部截断逻辑验证通过。
-- **VLog GC**：扫描阶段用最新版本 checker 逐条校验，精确识别 200,000 条垃圾记录；回收 214,105 KB（≈ 写入量的 2/3），回收后 100,000 个 key 全部读到最新值。
+- **VLog GC**：扫描阶段用最新版本 checker 逐条校验，精确识别 200,000 条垃圾记录；回收 214,106 KB（≈ 写入量的 2/3），回收后 100,000 个 key 全部读到最新值。
 - **并发写低于单线程**：写入在 VLog 与 WAL 上全局串行化（单日志顺序写设计），多线程只有锁竞争开销；group commit 已列入 Roadmap。
+
+### 大小 value 对比（inline vs VLog）
+
+`zerokv_value_compare` 对 value 大小逐档测写吞吐 / 写 p99 / 读 QPS / 读 p99 / 磁盘占用，覆盖 5→6 字节的分界：
+
+| size | path | write ops/s | write p99 | read QPS | read p99 | disk KB |
+|---|---|---|---|---|---|---|
+| 1 | inline | 1,504,350 | 1.60 µs | 3,219,545 | 0.44 µs | 2,186 |
+| 4 | inline | 1,506,015 | 1.47 µs | 3,110,392 | 0.58 µs | 2,186 |
+| 5 | inline | 1,445,630 | 1.59 µs | 2,944,875 | 0.49 µs | 2,187 |
+| 6 | vlog | 459,168 | 3.59 µs | 2,689,399 | 0.51 µs | 10,358 |
+| 8 | vlog | 461,368 | 4.02 µs | 2,727,378 | 0.71 µs | 10,847 |
+| 16 | vlog | 460,419 | 3.40 µs | 2,744,690 | 0.57 µs | 12,814 |
+| 64 | vlog | 449,358 | 4.12 µs | 2,536,698 | 0.55 µs | 24,575 |
+| 256 | vlog | 428,282 | 4.57 µs | 2,400,911 | 0.59 µs | 71,590 |
+| 1024 | vlog | 350,984 | 4.80 µs | 2,452,673 | 0.62 µs | 259,106 |
+
+结论：
+
+- **5→6 字节是硬台阶**：写吞吐从 145 万掉到 46 万（-68%），磁盘从 ~2MB 跳到 10MB（VLog 开始增长），写 p99 从 1.6µs 跳到 3.6µs（+2.3×）。
+- **写开销来源**：大值每次写多一次 `ValueLog::Append`（CRC + write 系统调用），小值只走 WAL。
+- **读延迟几乎不随 value 大小变化**（p99 稳定在 0.5–0.7µs），印证读路径是零拷贝，读 QPS 随 size 下降主要是拷贝版 API 的 memmove 成本。
+
+### 长尾延迟（p50 / p99 / p99.9 / p99.99）
+
+均值会掩盖长尾；`zerokv_latency` 测延迟分布，区分 inline 与 VLog 两条路径：
+
+```bash
+./build/zerokv_latency        # 冷读建议 sudo ./build/zerokv_latency
+```
+
+| 场景 | avg | p50 | p90 | p99 | p99.9 | p99.99 |
+|---|---|---|---|---|---|---|
+| 写 inline（5B） | 1.13 µs | 0.96 | 1.56 | 2.71 | 13.77 | 93.23 |
+| 写 VLog（1KB） | 3.49 µs | 3.06 | 4.09 | 7.15 | 54.21 | 142.09 |
+| 读命中 inline（5B） | 0.30 µs | 0.28 | 0.41 | 0.56 | 0.80 | 27.56 |
+| 读命中 VLog（1KB） | 0.71 µs | 0.51 | 0.90 | 3.43 | 5.63 | 65.95 |
+| 读未命中（Bloom） | 0.06 µs | 0.05 | 0.06 | 0.06 | 0.21 | 0.33 |
+| 范围扫描（冷，Seek+Next×100） | 6.81 µs | 4.62 | 4.94 | 8.65 | 867.06 | 1608.40 |
+
+（单位 µs；范围扫描为冷缓存。）
+
+关注点：① VLog 命中 p99 比 inline 高（多一次 mmap 读 + pin）；② 冷扫描 p99.99 = 1608µs、均值 6.81µs（≈236×），长尾由 mmap 缺页 + LZ4 解压主导。
+
+### 性能分析（火焰图）
+
+用 `perf` + [FlameGraph](https://github.com/brendangregg/FlameGraph) 对写/读路径分别采样（`zerokv_clean_perf`，20s 纯负载）：
+
+**写路径**：
+
+| 函数 | 占比 | 性质 |
+|---|---|---|
+| `write` 系统调用（含 ext4 页缓存路径） | ~41% | 每条 WAL 记录一次 `write()` |
+| `LockFreeSkipList::insert` | ~28% | 唯一的数据结构热点 |
+| `__mark_inode_dirty` / `ext4_dirty_inode` | ~19% | 小写入的元数据税（每次更新 size/mtime + 日志） |
+| 软件 CRC（libz） | ~8% | 可换硬件 CRC32C |
+
+**读路径**（零拷贝）：
+
+| 函数 | 占比 | 性质 |
+|---|---|---|
+| `SSTReader::Get` | ~44% | Bloom → 索引 → BlockCache → 解压 |
+| `shared_mutex` 读锁 | ~11% | BlockCache 命中路径的读锁 |
+| `shared_ptr` 引用计数 | ~9% | 块缓存块的持有/释放 churn |
+| `LockFreeSkipList::GetHandle` | ~2.8% | 无锁跳表读，非瓶颈 |
+
+**优化方向**（按收益排序，均已在 Roadmap / 未来展望）：
+
+1. **WAL group commit**：批量写摊薄元数据税（19% / 批量大小）
+2. **硬件 CRC32C**：替换软件 CRC，写 -7%
+3. **BlockCache 命中路径去锁 + 去 shared_ptr churn**：复用 EpochManager 做读保护，读 -20%
+
+> 采样方法：`-fno-omit-frame-pointer` 重编译 → `perf record -g --call-graph fp` → `stackcollapse-perf.pl | flamegraph.pl`。
 
 ## 可靠性测试
 
@@ -227,8 +312,20 @@ bash tests/scripts/run_robustness_crash.sh 10
 7. 崩溃注入目前仅覆盖单写线程场景；多线程写入过程中的崩溃尚未覆盖。断电（丢 page cache）安全性目前是设计论证 + fdatasync 语义推理，未做真实掉电实测
 
 ## 未来展望
+
 1. 进行多线程并发优化以及多线程可靠性检测
 2. 引入 io_uring 批量 IO 与 O_DIRECT（读路径替代 mmap），降低 syscall 与缺页中断带来的延迟抖动；配合 group commit、多段 VLog、分段 GC 收窄并发与 GC 造成的 p99 长尾
+3. WAL 换硬件 CRC32C（替换 libz 软件 CRC），降低写路径约 7% 的 CPU
+
+## Roadmap
+
+- [ ] Snapshot / MVCC
+- [ ] 通用 Slice Key + 字符串 Key 支持
+- [ ] DeleteRange / 前缀扫描 API
+- [ ] Group Commit（并发写吞吐）
+- [ ] BlockCache 命中路径无锁化（复用 EpochManager）
+- [ ] 与 RocksDB 的对照基准（同机器同负载）
+- [ ] 基于 ZeroKV 的 Raft 分布式层
 
 ## License
 

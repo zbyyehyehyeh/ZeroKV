@@ -88,6 +88,14 @@ struct ThreadLocalGuard {
     }
 };
 
+// zero-copy read: touch 1 byte to force page-in / avoid DCE, no full copy
+static inline bool zget(kvstore::DB& db, uint64_t k) {
+    PinnableSlice s;
+    if (!db.GetZeroCopy(k, s)) return false;
+    if (s.size() > 0) { volatile char c = s.data()[0]; (void)c; }
+    return true;
+}
+
 int main() {
     const std::string TEST_DIR = "/tmp/zerokv_bench";
     safe_remove_all(TEST_DIR);
@@ -147,8 +155,7 @@ int main() {
             Timer t;
             size_t found = 0;
             for (auto k : keys) { 
-                std::string v; 
-                if (db.Get(k, v)) found++; 
+                if (zget(db, k)) found++; 
             }
             double ms = t.elapsed_ms();
             std::cout << "  ✅ Hit: " << found << "/" << HIT_Q << " | " 
@@ -169,8 +176,7 @@ int main() {
             Timer t_hot;
             size_t found_hot = 0;
             for (auto k : hot_keys) { 
-                std::string v; 
-                if (db_hot.Get(k, v)) found_hot++; 
+                if (zget(db_hot, k)) found_hot++; 
             }
             double ms_hot = t_hot.elapsed_ms();
             std::cout << "  🔥 Hot Miss: " << std::setprecision(2) << ms_hot << " ms | "
@@ -187,8 +193,7 @@ int main() {
             Timer t_cold;
             size_t found_cold = 0;
             for (auto k : cold_keys) { 
-                std::string v; 
-                if (db_cold.Get(k, v)) found_cold++; 
+                if (zget(db_cold, k)) found_cold++; 
             }
             double ms_cold = t_cold.elapsed_ms();
             std::cout << "  ❄️  Cold Miss: " << std::setprecision(2) << ms_cold << " ms | "
