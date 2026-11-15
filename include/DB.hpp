@@ -391,7 +391,6 @@ namespace kvstore
         {
             if (wal_)
                 wal_->Sync();
-            
         }
 
         void WaitForBackgroundJobs()
@@ -475,6 +474,8 @@ namespace kvstore
             SyncWAL();
             FlushActiveMemTable();
             WaitForBackgroundJobs();
+            if (wal_)           // ← 加这两行
+                wal_->Rotate(); // ← 加这两行
             SaveManifest();
             BlockCache::instance().clear();
             wal_.reset();
@@ -669,8 +670,6 @@ namespace kvstore
                                      imm_memtables_.end());
             }
             UpdateWriteControllerState();
-            if (wal_)
-                wal_->Rotate();
         }
 
         void MaybeScheduleCompaction()
@@ -727,6 +726,8 @@ namespace kvstore
 
             FlushActiveMemTable();
             WaitForBackgroundJobs();
+            if (wal_)
+                wal_->Rotate();
 
             std::vector<DBSSTMeta> sources;
             {

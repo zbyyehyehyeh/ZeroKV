@@ -70,7 +70,7 @@ static std::string make_value(int tid, int i) {
 // ============ 自包含 fork + kill -9 测试 ============
 static bool test_multithread_crash() {
     const int T = 4;            // 写线程数
-    const int K = 200000;       // 每线程写 K 条（足够大，保证 kill 落在写中间）
+    const int K = 600000;       // 每线程写 K 条（足够大，保证 kill 落在写中间）
     std::string dir = temp_dir("crash");
 
     pid_t pid = ::fork();
