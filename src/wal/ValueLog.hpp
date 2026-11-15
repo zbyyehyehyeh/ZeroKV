@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -86,24 +87,34 @@ namespace kvstore
             ~MappedFile() = default;
         };
 
+        // 写段：每个段有独立的 fd / file_id / offset / 锁，写线程并行写不同段
+        struct WriteSegment
+        {
+            int fd = -1;
+            uint32_t file_id = 0;
+            uint32_t offset = 0;
+            std::mutex mtx;
+        };
+
         explicit ValueLog(const std::string &dir) : dir_(dir)
         {
             std::filesystem::create_directories(dir);
-            current_file_id_ = 0;
-            current_offset_ = 0;
-            current_fd_ = -1;
             gc_fd_ = -1;
             gc_file_id_ = 0;
+            gc_offset_ = 0;
             next_file_id_ = 1;
         }
 
         ~ValueLog()
         {
-            if (current_fd_ >= 0)
+            for (auto &seg : segments_)
             {
-                ::fdatasync(current_fd_);
-                ::close(current_fd_);
-                current_fd_ = -1;
+                if (seg.fd >= 0)
+                {
+                    ::fdatasync(seg.fd);
+                    ::close(seg.fd);
+                    seg.fd = -1;
+                }
             }
             if (gc_fd_ >= 0)
             {
@@ -147,14 +158,6 @@ namespace kvstore
 
             next_file_id_ = max_fid + 1;
 
-            if (max_fid == 0)
-            {
-                wl.unlock();
-                OpenNewFileInternal();
-                return;
-            }
-
-            uint32_t active_fid = 0;
             for (uint32_t fid = 1; fid <= max_fid; ++fid)
             {
                 std::string path = GetPath(fid);
@@ -191,7 +194,6 @@ namespace kvstore
                         break;
                     valid_offset += hdr.total_len;
                 }
-
                 MappedFile mf;
                 mf.mapped_size = std::max<size_t>(VLOG_ROLLOVER_THRESHOLD, valid_offset > 0 ? valid_offset * 2 : 4096);
                 mf.valid_size.store(valid_offset);
@@ -210,71 +212,45 @@ namespace kvstore
                                                            { if(p && p != MAP_FAILED) ::munmap(p, sz); });
                 }
                 mapped_files_[fid] = std::move(mf);
-
-                if (valid_offset > 0)
-                    active_fid = fid;
                 ::close(fd);
             }
 
+            // 开 N 个新写段（旧文件全部变只读，靠 GC 回收）
             wl.unlock();
-
-            if (active_fid > 0)
+            for (auto &seg : segments_)
             {
-                std::unique_lock<std::shared_mutex> wl2(map_mtx_);
-                current_file_id_ = active_fid;
-                current_offset_ = mapped_files_[active_fid].valid_size.load();
-
-                std::string path = GetPath(current_file_id_);
-                current_fd_ = ::open(path.c_str(), O_RDWR | O_APPEND);
-
-                auto &mf = mapped_files_[active_fid];
-                if (!mf.base && current_offset_ > 0)
-                {
-                    mf.base = ::mmap(nullptr, mf.mapped_size, PROT_READ, MAP_SHARED, current_fd_, 0);
-                    if (mf.base == MAP_FAILED)
-                        mf.base = nullptr;
-                    if (mf.base)
-                    {
-                        mf.mmap_holder = std::shared_ptr<void>(mf.base, [sz = mf.mapped_size](void *p)
-                                                               { if(p && p != MAP_FAILED) ::munmap(p, sz); });
-                    }
-                }
-                wl2.unlock();
-
-                if (current_offset_ > VLOG_ROLLOVER_THRESHOLD)
-                    OpenNewFileInternal();
-            }
-            else
-            {
-                OpenNewFileInternal();
+                OpenNewFileInternal(seg);
             }
         }
 
         void Append(uint64_t key, const char *value, uint32_t value_len, uint32_t &out_fid, uint32_t &out_off)
         {
-            std::unique_lock<std::mutex> lk(write_mtx_);
+            // 全局轮转选段，分散到不同段减少锁竞争
+            uint32_t seg_idx = rr_.fetch_add(1, std::memory_order_relaxed) % segments_.size();
+            WriteSegment &seg = segments_[seg_idx];
+
+            std::unique_lock<std::mutex> lk(seg.mtx); // 每段一把锁
 
             uint32_t total_len = sizeof(VLogRecordHeader) + sizeof(uint64_t) + value_len;
-            if (current_offset_ > VLOG_ROLLOVER_THRESHOLD ||
-                (current_offset_ + total_len > VLOG_MAX_OFFSET))
+            if (seg.offset > VLOG_ROLLOVER_THRESHOLD ||
+                (seg.offset + total_len > VLOG_MAX_OFFSET))
             {
-                OpenNewFileInternal();
+                OpenNewFileInternal(seg);
             }
 
-            out_fid = current_file_id_;
-            out_off = current_offset_;
+            out_fid = seg.file_id;
+            out_off = seg.offset;
 
             VLogRecordHeader hdr{total_len, 0, sizeof(uint64_t), value_len};
-
             uint32_t crc = crc32(0L, Z_NULL, 0);
             crc = crc32(crc, (const Bytef *)&key, sizeof(uint64_t));
             if (value_len > 0 && value)
                 crc = crc32(crc, (const Bytef *)value, value_len);
             hdr.crc32 = crc;
 
-            WriteRaw(&hdr, sizeof(hdr));
-            WriteRaw(&key, sizeof(uint64_t));
-            WriteRaw(value, value_len);
+            WriteRaw(seg, &hdr, sizeof(hdr));
+            WriteRaw(seg, &key, sizeof(uint64_t));
+            WriteRaw(seg, value, value_len);
         }
 
         bool Read(uint32_t file_id, uint32_t offset, uint32_t len, PinnableSlice &out_val)
@@ -293,14 +269,25 @@ namespace kvstore
             return true;
         }
 
-        uint32_t GetCurrentFileId() const { return current_file_id_; }
-        uint32_t GetCurrentValidSize() const { return current_offset_; }
+        // 恢复期校验句柄是否落在有效范围内（多段下逐文件检查 valid_size）
+        bool IsHandleValid(uint32_t file_id, uint32_t offset, uint32_t len) const
+        {
+            std::shared_lock<std::shared_mutex> rl(map_mtx_);
+            auto it = mapped_files_.find(file_id);
+            if (it == mapped_files_.end())
+                return false;
+            size_t vs = it->second.valid_size.load(std::memory_order_acquire);
+            return offset + sizeof(VLogRecordHeader) + sizeof(uint64_t) + len <= vs;
+        }
 
         void Sync()
         {
-            std::unique_lock<std::mutex> lk(write_mtx_);
-            if (current_fd_ >= 0)
-                ::fdatasync(current_fd_);
+            for (auto &seg : segments_)
+            {
+                std::lock_guard<std::mutex> lk(seg.mtx);
+                if (seg.fd >= 0)
+                    ::fdatasync(seg.fd);
+            }
         }
 
         uint32_t PickGCFile(double threshold = 0.5)
@@ -312,14 +299,14 @@ namespace kvstore
             for (auto &[id, info] : mapped_files_)
             {
                 size_t ds = info.discardable_size.load(std::memory_order_relaxed);
-                
-                if (id == current_file_id_ || (gc_file_id_ != 0 && id == gc_file_id_))
+
+                if (IsActiveSegment(id) || (gc_file_id_ != 0 && id == gc_file_id_))
                     continue;
                 if (!info.base || info.file_size == 0)
                     continue;
 
                 double garbage_ratio = static_cast<double>(ds) / info.file_size;
-                if (garbage_ratio >= max_garbage_ratio) 
+                if (garbage_ratio >= max_garbage_ratio)
                 {
                     max_garbage_ratio = garbage_ratio;
                     best_fid = id;
@@ -385,7 +372,7 @@ namespace kvstore
             uint32_t oldest_fid = UINT32_MAX;
             for (auto &[id, info] : mapped_files_)
             {
-                if (id == current_file_id_ || (gc_file_id_ != 0 && id == gc_file_id_))
+                if (IsActiveSegment(id) || (gc_file_id_ != 0 && id == gc_file_id_))
                     continue;
                 if (!info.base || info.file_size == 0)
                     continue;
@@ -397,8 +384,11 @@ namespace kvstore
 
         void RollToNewFile()
         {
-            std::unique_lock<std::mutex> lk(write_mtx_);
-            OpenNewFileInternal();
+            for (auto &seg : segments_)
+            {
+                std::lock_guard<std::mutex> lk(seg.mtx);
+                OpenNewFileInternal(seg);
+            }
         }
 
         DataHandle AppendForGC(uint64_t key, const char *value, uint32_t value_len)
@@ -473,15 +463,16 @@ namespace kvstore
         {
             std::shared_lock<std::shared_mutex> rl(map_mtx_);
             auto it = mapped_files_.find(file_id);
-            if (it != mapped_files_.end()) {
+            if (it != mapped_files_.end())
+            {
                 it->second.discardable_size += size;
             }
         }
 
     private:
-        
         static constexpr uint32_t VLOG_MAX_OFFSET = (1U << 30) - 1;
         static constexpr uint32_t VLOG_ROLLOVER_THRESHOLD = 900 * 1024 * 1024;
+        static constexpr uint32_t kNumSegments = 8; // 段数 ≥ 写线程数
 
         std::string GetPath(uint32_t id) { return dir_ + "/vlog_" + std::to_string(id) + ".vlog"; }
 
@@ -495,26 +486,34 @@ namespace kvstore
             return id;
         }
 
-        void OpenNewFileInternal()
+        bool IsActiveSegment(uint32_t id) const
         {
-            int old_fd = current_fd_;
-            current_fd_ = -1;
+            for (auto &seg : segments_)
+                if (seg.file_id == id)
+                    return true;
+            return false;
+        }
+
+        void OpenNewFileInternal(WriteSegment &seg)
+        {
+            int old_fd = seg.fd;
+            seg.fd = -1;
             if (old_fd >= 0)
             {
                 ::fdatasync(old_fd);
                 ::close(old_fd);
             }
 
-            current_file_id_ = AllocateFileId();
-            current_offset_ = 0;
-            std::string path = GetPath(current_file_id_);
+            seg.file_id = AllocateFileId();
+            seg.offset = 0;
+            std::string path = GetPath(seg.file_id);
             int new_fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
             if (new_fd < 0)
                 throw std::runtime_error("Failed to open VLog file");
 
             MappedFile mf;
             mf.valid_size.store(0);
-            mf.file_size = 0;  // ✅ FIX: 显式初始化 file_size
+            mf.file_size = 0;
 
             mf.mapped_size = VLOG_ROLLOVER_THRESHOLD;
             mf.base = ::mmap(nullptr, mf.mapped_size, PROT_READ, MAP_SHARED, new_fd, 0);
@@ -528,9 +527,9 @@ namespace kvstore
 
             {
                 std::unique_lock<std::shared_mutex> wl(map_mtx_);
-                mapped_files_[current_file_id_] = std::move(mf);
+                mapped_files_[seg.file_id] = std::move(mf);
             }
-            current_fd_ = new_fd;
+            seg.fd = new_fd;
         }
 
         void OpenNewGCFileInternal()
@@ -553,7 +552,7 @@ namespace kvstore
             MappedFile mf;
             mf.mapped_size = VLOG_ROLLOVER_THRESHOLD;
             mf.valid_size.store(0);
-            mf.file_size = 0;  // ✅ FIX: 显式初始化 file_size
+            mf.file_size = 0;
             mf.base = ::mmap(nullptr, mf.mapped_size, PROT_READ, MAP_SHARED, new_fd, 0);
             if (mf.base == MAP_FAILED)
                 mf.base = nullptr;
@@ -570,13 +569,13 @@ namespace kvstore
             gc_fd_ = new_fd;
         }
 
-        void WriteRaw(const void *data, size_t len)
+        void WriteRaw(WriteSegment &seg, const void *data, size_t len)
         {
             const char *ptr = static_cast<const char *>(data);
             size_t remaining = len;
             while (remaining > 0)
             {
-                ssize_t w = ::write(current_fd_, ptr, remaining);
+                ssize_t w = ::write(seg.fd, ptr, remaining);
                 if (w < 0)
                 {
                     if (errno == EINTR)
@@ -585,21 +584,21 @@ namespace kvstore
                 }
                 ptr += w;
                 remaining -= w;
-                current_offset_ += w;
+                seg.offset += w;
             }
 
             std::unique_lock<std::shared_mutex> wl(map_mtx_);
-            auto it = mapped_files_.find(current_file_id_);
+            auto it = mapped_files_.find(seg.file_id);
             if (it != mapped_files_.end())
             {
                 auto &mf = it->second;
-                mf.valid_size.store(current_offset_, std::memory_order_release);
-                mf.file_size = current_offset_;
+                mf.valid_size.store(seg.offset, std::memory_order_release);
+                mf.file_size = seg.offset;
 
-                if (current_offset_ > mf.mapped_size)
+                if (seg.offset > mf.mapped_size)
                 {
-                    size_t new_size = std::max<size_t>(VLOG_ROLLOVER_THRESHOLD, current_offset_ * 2);
-                    void *new_base = ::mmap(nullptr, new_size, PROT_READ, MAP_SHARED, current_fd_, 0);
+                    size_t new_size = std::max<size_t>(VLOG_ROLLOVER_THRESHOLD, seg.offset * 2);
+                    void *new_base = ::mmap(nullptr, new_size, PROT_READ, MAP_SHARED, seg.fd, 0);
                     if (new_base == MAP_FAILED)
                         new_base = nullptr;
 
@@ -617,10 +616,9 @@ namespace kvstore
         }
 
         std::string dir_;
-        int current_fd_ = -1;
-        uint32_t current_file_id_ = 0;
-        uint32_t current_offset_ = 0;
-        std::mutex write_mtx_;
+
+        std::array<WriteSegment, kNumSegments> segments_; // N 个写段（array：mutex 不可移动）
+        std::atomic<uint32_t> rr_{0};                     // 全局轮转计数器
 
         int gc_fd_ = -1;
         uint32_t gc_file_id_ = 0;

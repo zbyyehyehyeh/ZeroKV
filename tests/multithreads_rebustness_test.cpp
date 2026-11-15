@@ -112,7 +112,8 @@ static bool test_multithread_crash() {
                 if (snap[t] < (uint64_t)K) all_done = false;
             }
 
-            db.SyncWAL();   // flush + fsync，确保快照内的 key 已落盘
+            db.SyncWAL();
+            db.GetVLog()->Sync();
 
             char line[128];
             int n = std::snprintf(line, sizeof(line), "%llu %llu %llu %llu\n",

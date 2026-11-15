@@ -31,6 +31,8 @@
 #include "ValueLogGC.hpp"
 #include "CompactionTask.hpp"
 #include "MemTableIterator.hpp"
+#include "MemPool.hpp"
+#include "DataHandle.h"
 #include "DBIterator.hpp"
 
 namespace kvstore
@@ -181,14 +183,12 @@ namespace kvstore
             vlog_gc_ = std::make_unique<ValueLogGC>(vlog_.get());
 
             vlog_->RecoverAndTruncate();
-            uint32_t valid_vlog_file = vlog_->GetCurrentFileId();
-            uint32_t valid_vlog_size = vlog_->GetCurrentValidSize();
 
             uint64_t manifest_max_seq = LoadManifest();
 
             std::string wal_path = dir_ + "/wal.log";
             uint64_t wal_max_seq = WAL::Recover(wal_path,
-                                                [this, valid_vlog_file, valid_vlog_size](uint64_t seq, uint64_t k, const char *v, uint32_t vlen, WALRecordType type)
+                                                [this](uint64_t seq, uint64_t k, const char *v, uint32_t vlen, WALRecordType type)
                                                 {
                                                     if (vlen == sizeof(uint64_t))
                                                     {
@@ -199,7 +199,7 @@ namespace kvstore
                                                             uint32_t fid = dh.vlog_file_id();
                                                             uint32_t off = dh.vlog_offset();
                                                             uint32_t len = dh.size();
-                                                            if (fid > valid_vlog_file || (fid == valid_vlog_file && (off + sizeof(ValueLog::VLogRecordHeader) + sizeof(uint64_t) + len) > valid_vlog_size))
+                                                            if (!vlog_->IsHandleValid(fid, off, len))
                                                                 return;
                                                         }
                                                         if (type == WALRecordType::PUT || type == WALRecordType::DELETE)
@@ -391,6 +391,7 @@ namespace kvstore
         {
             if (wal_)
                 wal_->Sync();
+            
         }
 
         void WaitForBackgroundJobs()
