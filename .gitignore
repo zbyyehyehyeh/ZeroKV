@@ -7,4 +7,4 @@ FlameGraph/
 build/
 build_prof/
 perf/
-build_clang/
+build-clang/
