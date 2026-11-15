@@ -262,3 +262,39 @@ gc_pause_mtx_（shared_mutex：写路径 shared_lock，GC unique_lock）
 8. discardable 记账是启发式，checker 是权威。
 9. 恢复顺序：VLog 截断 → MANIFEST → WAL 回放，不可颠倒。
 10. 归并必须排空取 max seq，不能假设堆顶即最新。
+
+## 多段 VLog（KV 分离写路径）
+
+初版 VLog 是单活跃文件 + 全局 `write_mtx_`，并发写串行。改为 **8 个写段**：
+
+- 每个 `WriteSegment` 独立持有 `fd / file_id / offset / mutex`；
+- 写线程经原子轮转 `rr_.fetch_add(1) % 8` 选段，各写各的段，锁竞争大幅下降；
+- 恢复时所有旧 `.vlog` 文件变只读（供读 + GC），重新开 8 个新段；
+- GC 跳过所有活跃段（`IsActiveSegment`），活跃段轮转后才可回收。
+
+## WAL group commit
+
+WAL 初版每条记录一次 `write()`。改为共享 4MB 缓冲：
+
+- `Append` 把记录 memcpy 进缓冲区（锁内只做 memcpy），满了才 `FlushGroup` 批量 `write()`；
+- `SyncWAL` = `FlushGroup` + `fdatasync`；
+- 语义：Put 返回 ≠ 落盘（记录可能在缓冲区内，kill -9 会丢），需 `SyncWAL` 才持久。
+
+## WAL 轮转正确性
+
+**不变量：WAL 截断只能在无并发写的静默点进行。**
+
+后台 `FlushMemTable` 期间，新 memtable 的记录仍在往同一 WAL append，此时 `Rotate()`
+截断会丢失新 memtable 的日志。因此 `Rotate()` 只放在：
+
+1. `ForceGlobalCompaction`：`FlushActiveMemTable + WaitForBackgroundJobs` 之后；
+2. `Shutdown`：同上。
+
+代价是正常运行时 WAL 持续增长，直到静默点才截断——正确性优先于空间。
+
+## 持久化语义
+
+- VLog 大值写入默认只进 page cache，段轮转（900MB）或显式 `VLog::Sync()` 才落盘；
+- `SyncWAL()` 只保证 WAL 落盘，**不保证 VLog 落盘**；
+- 需要强持久化（崩溃恢复测试的提交点）时，调用方须同时 `SyncWAL()` + `VLog::Sync()`。
+  这是 KV 分离引擎的经典权衡（WiscKey 同款）：牺牲部分大值写延迟换吞吐。

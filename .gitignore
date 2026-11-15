@@ -6,4 +6,5 @@ benchmark/
 FlameGraph/
 build/
 build_prof/
-/perf
+perf/
+build_clang/
