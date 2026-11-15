@@ -116,3 +116,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/robustness_tests.cpp")
     )
   endif()
 endif()
+
+# 5b. 多线程崩溃注入测试（fork + kill -9，自包含）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/multithreads_rebustness_test.cpp")
+  add_executable(zerokv_mt_robustness tests/multithreads_rebustness_test.cpp)
+  target_link_libraries(zerokv_mt_robustness PRIVATE zerokv)
+
+  add_test(NAME zerokv_mt_robustness COMMAND zerokv_mt_robustness)
+  set_tests_properties(zerokv_mt_robustness PROPERTIES
+    TIMEOUT 300
+    LABELS "robustness;crash;multithread"
+  )
+endif()

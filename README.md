@@ -246,7 +246,7 @@ cmake --build build-tsan -j$(nproc) && ./build-tsan/zerokv_tests
 | `shared_ptr` 引用计数 | ~9% | 块缓存块的持有/释放 churn |
 | `LockFreeSkipList::GetHandle` | ~2.8% | 无锁跳表读，非瓶颈 |
 
-**优化方向**（按收益排序，均已在 Roadmap / 未来展望）：
+**优化方向**：
 
 1. **WAL group commit**：批量写摊薄元数据税（19% / 批量大小）
 2. **硬件 CRC32C**：替换软件 CRC，写 -7%

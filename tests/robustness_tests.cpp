@@ -473,6 +473,7 @@ static int run_writer(const std::string& dir, int N) {
             int n = snprintf(line, sizeof(line), "%d\n", i);
             ssize_t w = ::write(cfd, line, static_cast<size_t>(n));
             (void)w;
+            db.SyncWAL();
             ::fdatasync(cfd);   // 清单落盘后才算"已确认提交"
             std::printf("COMMIT %d\n", i);
             std::fflush(stdout);
